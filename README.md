@@ -2,7 +2,7 @@
 
 ## Requirements
 
-Node.js 20+, npm 10+, and a MongoDB Atlas database.
+Node.js 20.9+, npm 10+, and a MongoDB Atlas database.
 
 ## Configuration
 
@@ -15,6 +15,8 @@ npm install
 npm run seed
 npm run dev
 ```
+
+To run the sides in separate terminals instead, use `npm run dev:backend` and `npm run dev:frontend`.
 
 Frontend: http://localhost:3000. Backend API and health: http://localhost:8000/api and http://localhost:8000/api/health.
 
