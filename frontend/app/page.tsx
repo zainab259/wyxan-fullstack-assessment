@@ -11,6 +11,10 @@ const validAddress = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.zz$/i;
 function normalizedInput(input: string): string {
   return input.trim().toLowerCase().replace(/^https?:\/\//, '').split(/[/?#]/)[0] ?? '';
 }
+function makeNonce(): string {
+  const bytes = new Uint8Array(18); window.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
 function Icon({ children }: { children: React.ReactNode }) { return <span aria-hidden="true" className="inline-flex h-5 w-5 items-center justify-center text-lg leading-none">{children}</span>; }
 
 export default function Home() {
@@ -18,9 +22,8 @@ export default function Home() {
   const [userId, setUserId] = useState('');
   const [sessions, setSessions] = useState<SessionMap>({});
   const [address, setAddress] = useState('nature.zz');
-  const [visits, setVisits] = useState<Visit[]>([]);
+  const [historyByUser, setHistoryByUser] = useState<Record<string, Visit[]>>({});
   const [loading, setLoading] = useState(false);
-  const [historyLoading, setHistoryLoading] = useState(false);
   const [error, setError] = useState('');
   const [panel, setPanel] = useState<'history' | 'search' | 'publish'>('history');
   const [query, setQuery] = useState('');
@@ -31,34 +34,34 @@ export default function Home() {
   const currentSession = sessions[userId] ?? emptySession();
   const entry = currentSession.entries[currentSession.position];
   const currentPage = entry?.page;
+  const visits = historyByUser[userId] ?? [];
+  const historyLoading = Boolean(userId) && historyByUser[userId] === undefined;
 
   useEffect(() => {
-    const bytes = new Uint8Array(18); window.crypto.getRandomValues(bytes);
-    setNonce(Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join(''));
-    try { const stored = localStorage.getItem('small-web-sessions'); if (stored) setSessions(JSON.parse(stored) as SessionMap); } catch { localStorage.removeItem('small-web-sessions'); }
+    let restored: SessionMap = {};
+    try { const stored = localStorage.getItem('small-web-sessions'); if (stored) restored = JSON.parse(stored) as SessionMap; } catch { localStorage.removeItem('small-web-sessions'); }
     void api.users().then((rows) => {
+      if (Object.keys(restored).length > 0) setSessions(restored);
       setPeople(rows);
       const saved = localStorage.getItem('small-web-user');
-      setUserId(saved && rows.some((person) => person.id === saved) ? saved : rows[0]?.id ?? '');
+      const selected = saved && rows.some((person) => person.id === saved) ? saved : rows[0]?.id ?? '';
+      setUserId(selected);
+      setAddress(restored[selected]?.entries[restored[selected]?.position ?? -1]?.address ?? 'nature.zz');
+      setNonce(makeNonce());
     }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Could not load users.'));
   }, []);
 
   useEffect(() => {
     if (!userId) return;
     localStorage.setItem('small-web-user', userId);
-    setHistoryLoading(true);
-    void api.visits(userId).then(setVisits).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Could not load history.')).finally(() => setHistoryLoading(false));
+    void api.visits(userId).then((rows) => setHistoryByUser((previous) => ({ ...previous, [userId]: rows }))).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Could not load history.'));
   }, [userId]);
-
-  useEffect(() => {
-    setAddress(entry?.address ?? '');
-  }, [userId, currentSession.position, entry?.address]);
 
   useEffect(() => { try { localStorage.setItem('small-web-sessions', JSON.stringify(sessions)); } catch { /* Session snapshots are an in-memory enhancement if storage is unavailable. */ } }, [sessions]);
 
   const record = useCallback(async (site: Site, method: NavigationMethod) => {
     if (!userId) return;
-    try { const visit = await api.recordVisit({ userId, address: site.address, title: site.title, method }); setVisits((previous) => [visit, ...previous]); }
+    try { const visit = await api.recordVisit({ userId, address: site.address, title: site.title, method }); setHistoryByUser((previous) => ({ ...previous, [userId]: [visit, ...(previous[userId] ?? [])] })); }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not record this visit.'); }
   }, [userId]);
 
@@ -71,6 +74,7 @@ export default function Home() {
 
   const navigate = useCallback(async (raw: string, method: NavigationMethod) => {
     if (!userId) return;
+    if (!nonce) setNonce(makeNonce());
     const dest = normalizedInput(raw);
     setAddress(raw.trim()); setLoading(true); setError('');
     if (!validAddress.test(dest)) {
@@ -83,7 +87,7 @@ export default function Home() {
       commitPage({ kind: 'missing', address: dest }, dest, method);
       setError(message.toLowerCase().includes('no site exists') ? '' : message);
     } finally { setLoading(false); }
-  }, [commitPage, userId]);
+  }, [commitPage, nonce, userId]);
 
   const goToHistory = (visit: Visit) => { setPanel('history'); void navigate(visit.address, 'history'); };
   const onGo = (event: FormEvent) => { event.preventDefault(); void navigate(address, 'typed'); };
@@ -128,7 +132,7 @@ export default function Home() {
   return <main className="min-h-screen px-4 py-5 sm:px-8 sm:py-8">
     <header className="mx-auto mb-6 flex max-w-[1440px] flex-wrap items-center justify-between gap-4">
       <div className="flex items-center gap-3"><div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-ink text-xl text-white">w.</div><div><p className="text-xs font-bold uppercase tracking-[.22em] text-moss">A little corner of the internet</p><h1 className="text-xl font-bold tracking-tight">The Small Web</h1></div></div>
-      <label className="flex items-center gap-3 rounded-2xl border border-line bg-white px-4 py-2.5 shadow-sm"><span className="text-sm text-slate-500">Browsing as</span><select aria-label="Choose browsing user" className="max-w-40 bg-transparent font-semibold text-ink" value={userId} onChange={(event) => setUserId(event.target.value)}>{people.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}</select></label>
+      <label className="flex items-center gap-3 rounded-2xl border border-line bg-white px-4 py-2.5 shadow-sm"><span className="text-sm text-slate-500">Browsing as</span><select aria-label="Choose browsing user" className="max-w-40 bg-transparent font-semibold text-ink" value={userId} onChange={(event) => { const selected = event.target.value; const selectedSession = sessions[selected] ?? emptySession(); setUserId(selected); setAddress(selectedSession.entries[selectedSession.position]?.address ?? ''); setError(''); }}>{people.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}</select></label>
     </header>
 
     <section className="mx-auto max-w-[1440px] overflow-hidden rounded-[26px] border border-line bg-white shadow-soft">

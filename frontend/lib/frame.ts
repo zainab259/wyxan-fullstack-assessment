@@ -7,7 +7,6 @@ export function createSandboxDocument(site: Site, nonce: string): string {
     .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, '')
     .replace(/<\/?script\b[^>]*>/gi, '')
     .replace(/<meta\b(?=[^>]*\bhttp-equiv\s*=\s*["']?refresh\b)[^>]*>/gi, '');
-  const source = safeHtml.replace(/<head\b[^>]*>/i, (head) => `${head}${meta}`);
-  const document = /<head\b/i.test(safeHtml) ? source : `<!doctype html><html><head>${meta}<meta charset="utf-8"></head><body>${safeHtml}</body></html>`;
+  const document = `<!doctype html><html><head>${meta}<meta charset="utf-8"></head><body>${safeHtml}</body></html>`;
   return `${document}<script nonce="${nonce}">${bridge}</script>`;
 }
