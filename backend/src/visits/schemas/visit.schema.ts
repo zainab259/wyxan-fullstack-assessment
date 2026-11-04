@@ -5,7 +5,7 @@ export const NAVIGATION_METHODS = ['typed', 'link', 'back', 'forward', 'history'
 export class Visit {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true }) userId!: Types.ObjectId;
   @Prop({ required: true, lowercase: true, trim: true, index: true }) address!: string;
-  @Prop({ required: true, enum: NAVIGATION_METHODS }) method!: typeof NAVIGATION_METHODS[number];
+  @Prop({ type: String, required: true, enum: NAVIGATION_METHODS }) method!: typeof NAVIGATION_METHODS[number];
   @Prop({ type: Date, default: Date.now, required: true, index: true }) visitedAt!: Date;
   @Prop({ maxlength: 160 }) title?: string;
 }

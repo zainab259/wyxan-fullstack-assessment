@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { config } from 'dotenv';
 import mongoose from 'mongoose';
 import { readableText } from '../src/config/address';
+import { stableObjectId } from '../src/config/stable-id';
 config({ path: '.env' });
 const users = [
   { _id: '650000000000000000000001', name: 'Avery Stone', key: 'avery' },
@@ -39,12 +40,13 @@ async function seed(): Promise<void> {
   const userByKey = new Map<string, { _id: mongoose.Types.ObjectId }>();
   for (const user of users) { const found = await userCollection.findOne({ key: user.key }); if (found) userByKey.set(user.key, { _id: found._id as mongoose.Types.ObjectId }); }
   await siteCollection.createIndex({ seedKey: 1 }, { unique: true, sparse: true });
-  await siteCollection.bulkWrite(sites.map(([address, title, author, html]) => ({ updateOne: { filter: { seedKey: `seed-v1-${address}` }, update: { $set: { seedKey: `seed-v1-${address}`, address, title, authorId: userByKey.get(author.key)!._id, html, searchableText: readableText(html), createdAt: new Date('2025-01-01T00:00:00Z'), updatedAt: new Date('2025-01-01T00:00:00Z') } }, upsert: true } })));
+  await siteCollection.bulkWrite(sites.map(([address, title, author, html]) => ({ updateOne: { filter: { seedKey: `seed-v1-${address}` }, update: { $set: { seedKey: `seed-v1-${address}`, address, title, authorId: userByKey.get(author.key)!._id, html, searchableText: readableText(html), createdAt: new Date('2025-01-01T00:00:00Z'), updatedAt: new Date('2025-01-01T00:00:00Z') }, $setOnInsert: { _id: stableObjectId(`site:${address}`) } }, upsert: true } })));
   await visitCollection.createIndex({ seedKey: 1 }, { unique: true, sparse: true }); await visitCollection.createIndex({ userId: 1, visitedAt: -1 });
   const base = new Date('2025-01-01T12:00:00Z'); let ordinal = 0;
   const ops = visits.flatMap(([key, addresses]) => (addresses as string[]).map((address) => {
     const minute = ordinal++ * 2;
-    return { updateOne: { filter: { seedKey: `seed-v1-${key}-${minute}` }, update: { $setOnInsert: { _id: new mongoose.Types.ObjectId(), seedKey: `seed-v1-${key}-${minute}`, userId: userByKey.get(key as string)!._id, address, method: minute === 0 ? 'typed' : 'link', title: sites.find((s) => s[0] === address)?.[1], visitedAt: new Date(base.getTime() + minute * 60_000) } }, upsert: true } };
+    const seedKey = `seed-v1-${key}-${minute}`;
+    return { updateOne: { filter: { seedKey }, update: { $setOnInsert: { _id: stableObjectId(`visit:${seedKey}`), seedKey, userId: userByKey.get(key as string)!._id, address, method: minute === 0 ? 'typed' : 'link', title: sites.find((s) => s[0] === address)?.[1], visitedAt: new Date(base.getTime() + minute * 60_000) } }, upsert: true } };
   }));
   await visitCollection.bulkWrite(ops); await mongoose.disconnect();
   console.log(`Seeded ${users.length} users, ${sites.length} sites, and ${ops.length} deterministic visits.`);
