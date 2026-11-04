@@ -1,4 +1,4 @@
-import { emptySession, move, pushEntry } from './navigation';
+import { emptySession, move, pushEntry, replaceUserSession } from './navigation';
 import type { PageState } from '../types';
 const page = (address: string): PageState => ({ kind: 'site', site: { _id: address, address, title: address, html: '', authorId: '', createdAt: '', updatedAt: '' } });
 describe('browser navigation', () => {
@@ -41,7 +41,25 @@ describe('browser navigation', () => {
     let state = pushEntry(emptySession(), 'nature.zz', old);
     state = pushEntry(state, 'nature.zz', refreshed);
     expect(state.entries).toHaveLength(2);
-    expect(state.entries[0]?.page).toBe(old);
+    state = move(state, -1);
+    expect(state.entries[state.position]?.page).toBe(old);
+    const restored = state.entries[state.position]?.page;
+    expect(restored?.kind).toBe('site');
+    if (restored?.kind === 'site') expect(restored.site.html).toBe('<p>old</p>');
     expect(state.entries[1]?.page).toBe(refreshed);
+  });
+  it('keeps each selected person’s navigation stack separate', () => {
+    const avery = pushEntry(emptySession(), 'nature.zz', page('nature.zz'));
+    const mina = pushEntry(emptySession(), 'science.zz', page('science.zz'));
+    const sessions = replaceUserSession(replaceUserSession({}, 'avery-id', avery), 'mina-id', mina);
+    expect(sessions['avery-id']?.entries[0]?.address).toBe('nature.zz');
+    expect(sessions['mina-id']?.entries[0]?.address).toBe('science.zz');
+  });
+  it('keeps a missing page in the active trail and lets Back restore the prior site', () => {
+    let state = pushEntry(emptySession(), 'nature.zz', page('nature.zz'));
+    state = pushEntry(state, 'nowhere.zz', { kind: 'missing', address: 'nowhere.zz' });
+    expect(state.entries[state.position]?.page.kind).toBe('missing');
+    state = move(state, -1);
+    expect(state.entries[state.position]?.address).toBe('nature.zz');
   });
 });

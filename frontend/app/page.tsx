@@ -3,10 +3,9 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { createSandboxDocument } from '@/lib/frame';
-import { emptySession, move, pushEntry } from '@/lib/navigation';
+import { emptySession, move, pushEntry, replaceUserSession } from '@/lib/navigation';
 import type { BrowserSession, NavigationMethod, PageState, Person, SearchResult, Site, Visit } from '@/types';
 
-type SessionMap = Record<string, BrowserSession>;
 const validAddress = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.zz$/i;
 function normalizedInput(input: string): string {
   return input.trim().toLowerCase().replace(/^https?:\/\//, '').split(/[/?#]/)[0] ?? '';
@@ -20,7 +19,7 @@ function Icon({ children }: { children: React.ReactNode }) { return <span aria-h
 export default function Home() {
   const [people, setPeople] = useState<Person[]>([]);
   const [userId, setUserId] = useState('');
-  const [sessions, setSessions] = useState<SessionMap>({});
+  const [sessions, setSessions] = useState<Record<string, BrowserSession>>({});
   const [address, setAddress] = useState('nature.zz');
   const [historyByUser, setHistoryByUser] = useState<Record<string, Visit[]>>({});
   const [loading, setLoading] = useState(false);
@@ -38,8 +37,8 @@ export default function Home() {
   const historyLoading = Boolean(userId) && historyByUser[userId] === undefined;
 
   useEffect(() => {
-    let restored: SessionMap = {};
-    try { const stored = localStorage.getItem('small-web-sessions'); if (stored) restored = JSON.parse(stored) as SessionMap; } catch { localStorage.removeItem('small-web-sessions'); }
+    let restored: Record<string, BrowserSession> = {};
+    try { const stored = localStorage.getItem('small-web-sessions'); if (stored) restored = JSON.parse(stored) as Record<string, BrowserSession>; } catch { localStorage.removeItem('small-web-sessions'); }
     void api.users().then((rows) => {
       if (Object.keys(restored).length > 0) setSessions(restored);
       setPeople(rows);
@@ -66,7 +65,7 @@ export default function Home() {
   }, [userId]);
 
   const commitPage = useCallback((page: PageState, dest: string, method: NavigationMethod) => {
-    setSessions((previous) => ({ ...previous, [userId]: pushEntry(previous[userId] ?? emptySession(), dest, page) }));
+    setSessions((previous) => replaceUserSession(previous, userId, pushEntry(previous[userId] ?? emptySession(), dest, page)));
     setAddress(dest);
     setError('');
     if (page.kind === 'site') void record(page.site, method);
@@ -117,12 +116,12 @@ export default function Home() {
 
   const goBack = () => {
     const moved = move(currentSession, -1); const page = moved.entries[moved.position]?.page;
-    setSessions((previous) => ({ ...previous, [userId]: moved })); setAddress(moved.entries[moved.position]?.address ?? '');
+    setSessions((previous) => replaceUserSession(previous, userId, moved)); setAddress(moved.entries[moved.position]?.address ?? '');
     if (page?.kind === 'site') void record(page.site, 'back');
   };
   const goForward = () => {
     const moved = move(currentSession, 1); const page = moved.entries[moved.position]?.page;
-    setSessions((previous) => ({ ...previous, [userId]: moved })); setAddress(moved.entries[moved.position]?.address ?? '');
+    setSessions((previous) => replaceUserSession(previous, userId, moved)); setAddress(moved.entries[moved.position]?.address ?? '');
     if (page?.kind === 'site') void record(page.site, 'forward');
   };
 

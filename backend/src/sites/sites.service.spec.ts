@@ -5,6 +5,13 @@ import { User } from '../users/schemas/user.schema';
 import { SitesService } from './sites.service';
 
 describe('SitesService publishing and search', () => {
+  it('returns no matches for an empty query without reading the collection', async () => {
+    const find = jest.fn();
+    const service = new SitesService({ find } as unknown as Model<Site>, {} as Model<User>);
+    await expect(service.search('   ')).resolves.toEqual([]);
+    expect(find).not.toHaveBeenCalled();
+  });
+
   it('stores normalized addresses and prose text for newly published HTML', async () => {
     const create = jest.fn().mockImplementation(async (value: unknown) => value);
     const users = { exists: jest.fn().mockResolvedValue({}) };
@@ -30,5 +37,15 @@ describe('SitesService publishing and search', () => {
     expect(sites.find).toHaveBeenCalledWith({ $or: [{ title: expect.any(RegExp) }, { searchableText: expect.any(RegExp) }] });
     expect(result[0]?.snippet).toContain('C++');
     expect(result[0]?.address).toBe('science.zz');
+  });
+
+  it('finds a page through its title', async () => {
+    const row = { address: 'observatory.zz', title: 'A Window on the Night Sky', html: '<p>Planets and stars.</p>', searchableText: 'Planets and stars.', authorId: { name: 'Mina' } };
+    const query = { limit: jest.fn().mockReturnThis(), populate: jest.fn().mockReturnThis(), lean: jest.fn().mockResolvedValue([row]) };
+    const sites = { find: jest.fn().mockReturnValue(query) };
+    const service = new SitesService(sites as unknown as Model<Site>, {} as Model<User>);
+    const result = await service.search('Night Sky');
+    expect(result).toHaveLength(1);
+    expect(result[0]?.title).toBe('A Window on the Night Sky');
   });
 });
