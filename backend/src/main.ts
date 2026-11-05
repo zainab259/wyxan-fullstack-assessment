@@ -1,7 +1,10 @@
+import { setServers } from 'node:dns';
 import 'reflect-metadata';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
+
+setServers(['8.8.8.8', '8.8.4.4']);
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, { logger: ['error', 'warn', 'log'] });
