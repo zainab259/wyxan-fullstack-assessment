@@ -81,6 +81,10 @@ async function main() {
   const mockApi = `(() => {
     window.__MOCK_LOG = [];
     const users = [{id:'reader-a',name:'Avery Stone'},{id:'reader-b',name:'Mina Chen'}];
+    const trails = {
+      'reader-a': [{_id:'trail-a',userId:'reader-a',address:'nature.zz',title:'Avery trail entry',method:'typed',visitedAt:'2025-01-01T12:00:00.000Z'}],
+      'reader-b': [{_id:'trail-b',userId:'reader-b',address:'travel.zz',title:'Mina trail marker',method:'link',visitedAt:'2025-01-01T12:05:00.000Z'}]
+    };
     const pages = {
       'nature.zz': {title:'Coastal Field Notes', html:${JSON.stringify(maliciousHtml)}},
       'science.zz': {title:'Small Experiments', html:'<h1>Science</h1><a href="books.zz">books</a>'},
@@ -96,7 +100,7 @@ async function main() {
       window.__MOCK_LOG.push(url.toString());
       if (url.pathname.endsWith('/users')) return json(users);
       if (url.pathname.endsWith('/visits') && init.method === 'POST') return json({_id:String(Date.now()), ...JSON.parse(init.body), visitedAt:new Date().toISOString()});
-      if (url.pathname.endsWith('/visits')) return json([]);
+      if (url.pathname.endsWith('/visits')) return json(trails[url.searchParams.get('userId')] || []);
       if (url.pathname.endsWith('/search')) return json([{address:'nature.zz',title:'Coastal Field Notes',snippet:'Tide pools and small discoveries.',author:{id:'reader-a',name:'Avery Stone'}}]);
       if (url.pathname.endsWith('/sites') && init.method === 'POST') {
         const published = JSON.parse(init.body); pages[published.address] = published;
@@ -125,6 +129,16 @@ async function main() {
   const address = (value) => evaluate(`(() => { const el=document.querySelector('[aria-label="Fictional website address"]'); const set=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set; set.call(el,${JSON.stringify(value)}); el.dispatchEvent(new Event('input',{bubbles:true})); el.form.requestSubmit(); return true; })()`);
   const waitAddress = async (value) => eventually(async () => (await pageMeta()) === value, `page ${value}`);
   const click = (selector) => evaluate(`(() => { const el=document.querySelector(${JSON.stringify(selector)}); if(!el) throw new Error('Missing selector '+${JSON.stringify(selector)}); el.click(); return true; })()`);
+  const selectReader = (value) => evaluate(`(() => { const el=document.querySelector('[aria-label="Choose browsing user"]'); const set=Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set; set.call(el,${JSON.stringify(value)}); el.dispatchEvent(new Event('change',{bubbles:true})); return true; })()`);
+  await eventually(() => evaluate("Array.from(document.querySelectorAll('.side-panel button.group')).some(button=>button.textContent.includes('Avery trail entry'))"), 'Avery history');
+  await evaluate("Array.from(document.querySelectorAll('.side-panel button.group')).find(button=>button.textContent.includes('Avery trail entry')).click()");
+  await waitAddress('nature.zz');
+  await selectReader('reader-b');
+  await eventually(() => evaluate("Array.from(document.querySelectorAll('.side-panel button.group')).some(button=>button.textContent.includes('Mina trail marker'))"), 'Mina history');
+  assert.equal(await evaluate("Array.from(document.querySelectorAll('.side-panel button.group')).some(button=>button.textContent.includes('Avery trail entry'))"), false, 'history must be private to the selected reader');
+  await evaluate("Array.from(document.querySelectorAll('.side-panel button.group')).find(button=>button.textContent.includes('Mina trail marker')).click()");
+  await waitAddress('travel.zz');
+  await selectReader('reader-a'); await waitAddress('nature.zz');
   await address('nature.zz');
   await waitAddress('nature.zz');
   await eventually(() => evaluate("document.querySelector('iframe')?.getAttribute('sandbox') === 'allow-scripts'"), 'restricted iframe sandbox');
