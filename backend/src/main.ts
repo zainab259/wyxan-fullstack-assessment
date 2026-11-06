@@ -1,12 +1,14 @@
-import { setServers } from 'node:dns';
 import 'reflect-metadata';
+import { config } from 'dotenv';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
+import { configureDns } from './config/dns';
 
-setServers(['8.8.8.8', '8.8.4.4']);
+config({ path: '.env' });
 
 async function bootstrap(): Promise<void> {
+  configureDns();
   const app = await NestFactory.create(AppModule, { logger: ['error', 'warn', 'log'] });
   app.setGlobalPrefix('api');
   app.enableCors({ origin: process.env.FRONTEND_ORIGIN ?? 'http://localhost:3000', methods: ['GET', 'POST'], credentials: false });

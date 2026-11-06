@@ -1,11 +1,11 @@
-import { setServers } from 'node:dns';
 import 'reflect-metadata';
 import { config } from 'dotenv';
 import mongoose from 'mongoose';
 import { readableText } from '../src/config/address';
+import { configureDns } from '../src/config/dns';
 import { stableObjectId } from '../src/config/stable-id';
 config({ path: '.env' });
-setServers(['8.8.8.8', '8.8.4.4']);
+configureDns();
 const users = [
   { _id: '650000000000000000000001', name: 'Avery Stone', key: 'avery' },
   { _id: '650000000000000000000002', name: 'Mina Chen', key: 'mina' },
