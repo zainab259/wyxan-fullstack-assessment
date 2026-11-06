@@ -1,7 +1,24 @@
-import { emptySession, move, pushEntry, replaceUserSession } from './navigation';
+import { emptySession, move, NavigationGate, pushEntry, replaceUserSession } from './navigation';
 import type { PageState } from '../types';
 const page = (address: string): PageState => ({ kind: 'site', site: { _id: address, address, title: address, html: '', authorId: '', createdAt: '', updatedAt: '' } });
 describe('browser navigation', () => {
+  it('allows only the latest request for the selected reader to commit', () => {
+    const gate = new NavigationGate();
+    const slowRequest = gate.begin('avery');
+    const fastRequest = gate.begin('avery');
+    expect(gate.isCurrent(fastRequest, 'avery')).toBe(true);
+    expect(gate.isCurrent(slowRequest, 'avery')).toBe(false);
+    expect(gate.isCurrent(fastRequest, 'mina')).toBe(false);
+  });
+  it('invalidates pending requests immediately when a reader changes or history moves', () => {
+    const gate = new NavigationGate();
+    const pending = gate.begin('avery');
+    gate.cancel();
+    expect(gate.isCurrent(pending, 'avery')).toBe(false);
+    const next = gate.begin('mina');
+    expect(gate.isCurrent(next, 'mina')).toBe(true);
+  });
+
   it('moves backward and forward across a trail and discards the forward branch', () => {
     let state = emptySession();
     for (const address of ['a.zz', 'b.zz', 'c.zz', 'd.zz']) state = pushEntry(state, address, page(address));

@@ -1,5 +1,12 @@
 import type { Person, SearchResult, Site, Visit, NavigationMethod } from '../types';
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000/api';
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try { response = await fetch(`${API}${path}`, { ...init, headers: { 'Content-Type': 'application/json', ...init?.headers } }); }
@@ -7,7 +14,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const data: unknown = await response.json().catch(() => ({}));
   if (!response.ok) {
     const message = typeof data === 'object' && data !== null && 'message' in data ? (data as { message: unknown }).message : 'The request failed.';
-    throw new Error(Array.isArray(message) ? message.join(' ') : String(message));
+    throw new ApiError(Array.isArray(message) ? message.join(' ') : String(message), response.status);
   }
   return data as T;
 }

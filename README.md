@@ -26,7 +26,10 @@ Frontend: http://localhost:3000. Backend API and health: http://localhost:8000/a
 npm test
 npm run lint
 npm run build
+npm run test:browser
 ```
+
+The browser walkthrough needs Chrome or Edge and a running frontend at `http://localhost:3000`; it uses a mocked API so it does not write test pages to MongoDB. Set `CHROME_PATH` if the browser executable is outside its standard Windows location.
 
 The seed is deterministic and upserts only its own stable user/site/visit IDs. Duplicate published addresses are rejected with HTTP 409. Browsing history is per selected person; no accounts or authentication are used.
 

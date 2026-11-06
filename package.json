@@ -7,6 +7,7 @@
     "dev": "concurrently -k \"npm:dev:backend\" \"npm:dev:frontend\"",
     "dev:backend": "npm --workspace backend run start:dev",
     "dev:frontend": "npm --workspace frontend run dev",
+    "test:browser": "node scripts/browser-walkthrough.cjs",
     "build": "npm run build --workspace backend && npm run build --workspace frontend",
     "lint": "npm run lint --workspace backend && npm run lint --workspace frontend",
     "test": "npm run test --workspace backend && npm run test --workspace frontend",

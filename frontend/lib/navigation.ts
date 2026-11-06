@@ -1,5 +1,28 @@
 import type { BrowserSession, NavigationEntry, PageState } from '../types';
 export type BrowserSessions = Record<string, BrowserSession>;
+
+/** Tracks which asynchronous page load is allowed to update the active browser. */
+export class NavigationGate {
+  private sequence = 0;
+
+  begin(userId: string): number {
+    this.sequence += 1;
+    this.userId = userId;
+    return this.sequence;
+  }
+
+  private userId = '';
+
+  isCurrent(requestId: number, userId: string): boolean {
+    return this.sequence === requestId && this.userId === userId;
+  }
+
+  cancel(): void {
+    this.sequence += 1;
+    this.userId = '';
+  }
+}
+
 export const emptySession = (): BrowserSession => ({ entries: [], position: -1 });
 export function replaceUserSession(sessions: BrowserSessions, userId: string, session: BrowserSession): BrowserSessions {
   return { ...sessions, [userId]: session };

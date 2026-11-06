@@ -1,9 +1,9 @@
 'use client';
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { createSandboxDocument } from '@/lib/frame';
-import { emptySession, move, pushEntry, replaceUserSession } from '@/lib/navigation';
+import { emptySession, move, NavigationGate, pushEntry, replaceUserSession } from '@/lib/navigation';
 import type { BrowserSession, NavigationMethod, PageState, Person, SearchResult, Site, Visit } from '@/types';
 
 const validAddress = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.zz$/i;
@@ -20,6 +20,15 @@ export default function Home() {
   const [people, setPeople] = useState<Person[]>([]);
   const [userId, setUserId] = useState('');
   const [sessions, setSessions] = useState<Record<string, BrowserSession>>({});
+  const sessionsRef = useRef(sessions);
+  const activeUserRef = useRef('');
+  const navigationGateRef = useRef(new NavigationGate());
+  const publishRequestRef = useRef(0);
+  const updateSessions = useCallback((update: (current: Record<string, BrowserSession>) => Record<string, BrowserSession>) => {
+    const next = update(sessionsRef.current);
+    sessionsRef.current = next;
+    setSessions(next);
+  }, []);
   const [address, setAddress] = useState('nature.zz');
   const [historyByUser, setHistoryByUser] = useState<Record<string, Visit[]>>({});
   const [loading, setLoading] = useState(false);
@@ -40,10 +49,11 @@ export default function Home() {
     let restored: Record<string, BrowserSession> = {};
     try { const stored = localStorage.getItem('small-web-sessions'); if (stored) restored = JSON.parse(stored) as Record<string, BrowserSession>; } catch { localStorage.removeItem('small-web-sessions'); }
     void api.users().then((rows) => {
-      if (Object.keys(restored).length > 0) setSessions(restored);
+      if (Object.keys(restored).length > 0) { sessionsRef.current = restored; setSessions(restored); }
       setPeople(rows);
       const saved = localStorage.getItem('small-web-user');
       const selected = saved && rows.some((person) => person.id === saved) ? saved : rows[0]?.id ?? '';
+      activeUserRef.current = selected;
       setUserId(selected);
       setAddress(restored[selected]?.entries[restored[selected]?.position ?? -1]?.address ?? 'nature.zz');
       setNonce(makeNonce());
@@ -53,55 +63,80 @@ export default function Home() {
   useEffect(() => {
     if (!userId) return;
     localStorage.setItem('small-web-user', userId);
-    void api.visits(userId).then((rows) => setHistoryByUser((previous) => ({ ...previous, [userId]: rows }))).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Could not load history.'));
+    let active = true;
+    void api.visits(userId).then((rows) => { if (active) setHistoryByUser((previous) => ({ ...previous, [userId]: rows })); }).catch((cause: unknown) => {
+      if (active && activeUserRef.current === userId) setError(cause instanceof Error ? cause.message : 'Could not load history.');
+    });
+    return () => { active = false; };
   }, [userId]);
 
   useEffect(() => { try { localStorage.setItem('small-web-sessions', JSON.stringify(sessions)); } catch { /* Session snapshots are an in-memory enhancement if storage is unavailable. */ } }, [sessions]);
 
-  const record = useCallback(async (site: Site, method: NavigationMethod) => {
-    if (!userId) return;
-    try { const visit = await api.recordVisit({ userId, address: site.address, title: site.title, method }); setHistoryByUser((previous) => ({ ...previous, [userId]: [visit, ...(previous[userId] ?? [])] })); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not record this visit.'); }
-  }, [userId]);
+  const record = useCallback(async (site: Site, method: NavigationMethod, owner: string) => {
+    if (!owner) return;
+    try { const visit = await api.recordVisit({ userId: owner, address: site.address, title: site.title, method }); setHistoryByUser((previous) => ({ ...previous, [owner]: [visit, ...(previous[owner] ?? [])] })); }
+    catch (cause) { if (activeUserRef.current === owner) setError(cause instanceof Error ? cause.message : 'Could not record this visit.'); }
+  }, []);
 
-  const commitPage = useCallback((page: PageState, dest: string, method: NavigationMethod) => {
-    setSessions((previous) => replaceUserSession(previous, userId, pushEntry(previous[userId] ?? emptySession(), dest, page)));
+  const commitPage = useCallback((page: PageState, dest: string, method: NavigationMethod, owner: string) => {
+    updateSessions((previous) => replaceUserSession(previous, owner, pushEntry(previous[owner] ?? emptySession(), dest, page)));
     setAddress(dest);
     setError('');
-    if (page.kind === 'site') void record(page.site, method);
-  }, [record, userId]);
+    if (page.kind === 'site') void record(page.site, method, owner);
+  }, [record, updateSessions]);
 
   const navigate = useCallback(async (raw: string, method: NavigationMethod) => {
-    if (!userId) return;
+    const owner = userId;
+    if (!owner) return;
+    const gate = navigationGateRef.current!;
+    const requestId = gate.begin(owner);
+    const isCurrent = () => gate.isCurrent(requestId, owner) && activeUserRef.current === owner;
     if (!nonce) setNonce(makeNonce());
     const dest = normalizedInput(raw);
     setAddress(raw.trim()); setLoading(true); setError('');
     if (!validAddress.test(dest)) {
-      commitPage({ kind: 'missing', address: dest || raw.trim() || 'unknown address' }, dest || raw.trim(), method);
-      setLoading(false); return;
+      if (isCurrent()) commitPage({ kind: 'missing', address: dest || raw.trim() || 'unknown address' }, dest || raw.trim(), method, owner);
+      if (isCurrent()) setLoading(false);
+      return;
     }
-    try { const site = await api.site(dest); commitPage({ kind: 'site', site }, site.address, method); }
+    try {
+      const site = await api.site(dest);
+      if (isCurrent()) commitPage({ kind: 'site', site }, site.address, method, owner);
+    }
     catch (cause) {
-      const message = cause instanceof Error ? cause.message : 'Could not load the site.';
-      commitPage({ kind: 'missing', address: dest }, dest, method);
-      setError(message.toLowerCase().includes('no site exists') ? '' : message);
-    } finally { setLoading(false); }
+      if (!isCurrent()) return;
+      if (cause instanceof ApiError && cause.status === 404) commitPage({ kind: 'missing', address: dest }, dest, method, owner);
+      else setError(cause instanceof Error ? cause.message : 'Could not load the site.');
+    } finally { if (isCurrent()) setLoading(false); }
   }, [commitPage, nonce, userId]);
 
   const goToHistory = (visit: Visit) => { setPanel('history'); void navigate(visit.address, 'history'); };
   const onGo = (event: FormEvent) => { event.preventDefault(); void navigate(address, 'typed'); };
   const onSearch = async (event: FormEvent) => {
     event.preventDefault(); const value = query.trim(); if (!value) { setError('Enter a word or phrase to search.'); return; }
+    const owner = userId;
+    if (!owner) return;
+    const gate = navigationGateRef.current!;
+    const requestId = gate.begin(owner);
+    const isCurrent = () => gate.isCurrent(requestId, owner) && activeUserRef.current === owner;
     setLoading(true); setError('');
-    try { const results = await api.search(value); const page: PageState = { kind: 'search', query: value, results }; commitPage(page, `search://${encodeURIComponent(value)}`, 'search'); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : 'Search failed.'); }
-    finally { setLoading(false); }
+    try { const results = await api.search(value); if (isCurrent()) { const page: PageState = { kind: 'search', query: value, results }; commitPage(page, `search://${encodeURIComponent(value)}`, 'search', owner); } }
+    catch (cause) { if (isCurrent()) setError(cause instanceof Error ? cause.message : 'Search failed.'); }
+    finally { if (isCurrent()) setLoading(false); }
   };
   const onPublish = async (event: FormEvent) => {
     event.preventDefault(); setPublishing(true); setError('');
-    try { const site = await api.publish({ ...publishForm, authorId: userId }); setPublishForm({ address: '', title: '', html: '' }); setPanel('history'); await navigate(site.address, 'publish'); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : 'Publishing failed.'); }
-    finally { setPublishing(false); }
+    const owner = userId;
+    const publishRequest = ++publishRequestRef.current;
+    const gate = navigationGateRef.current!;
+    const requestId = gate.begin(owner);
+    try {
+      const site = await api.publish({ ...publishForm, authorId: owner });
+      if (!gate.isCurrent(requestId, owner) || activeUserRef.current !== owner) return;
+      setPublishForm({ address: '', title: '', html: '' }); setPanel('history'); await navigate(site.address, 'publish');
+    }
+    catch (cause) { if (gate.isCurrent(requestId, owner) && activeUserRef.current === owner) setError(cause instanceof Error ? cause.message : 'Publishing failed.'); }
+    finally { if (publishRequestRef.current === publishRequest) setPublishing(false); }
   };
 
   useEffect(() => {
@@ -115,14 +150,18 @@ export default function Home() {
   }, [navigate]);
 
   const goBack = () => {
-    const moved = move(currentSession, -1); const page = moved.entries[moved.position]?.page;
-    setSessions((previous) => replaceUserSession(previous, userId, moved)); setAddress(moved.entries[moved.position]?.address ?? '');
-    if (page?.kind === 'site') void record(page.site, 'back');
+    navigationGateRef.current!.cancel(); setLoading(false);
+    const owner = userId;
+    const moved = move(sessionsRef.current[owner] ?? emptySession(), -1); const page = moved.entries[moved.position]?.page;
+    updateSessions((previous) => replaceUserSession(previous, owner, moved)); setAddress(moved.entries[moved.position]?.address ?? '');
+    if (page?.kind === 'site') void record(page.site, 'back', owner);
   };
   const goForward = () => {
-    const moved = move(currentSession, 1); const page = moved.entries[moved.position]?.page;
-    setSessions((previous) => replaceUserSession(previous, userId, moved)); setAddress(moved.entries[moved.position]?.address ?? '');
-    if (page?.kind === 'site') void record(page.site, 'forward');
+    navigationGateRef.current!.cancel(); setLoading(false);
+    const owner = userId;
+    const moved = move(sessionsRef.current[owner] ?? emptySession(), 1); const page = moved.entries[moved.position]?.page;
+    updateSessions((previous) => replaceUserSession(previous, owner, moved)); setAddress(moved.entries[moved.position]?.address ?? '');
+    if (page?.kind === 'site') void record(page.site, 'forward', owner);
   };
 
   const sandboxDoc = useMemo(() => currentPage?.kind === 'site' && nonce ? createSandboxDocument(currentPage.site, nonce) : '', [currentPage, nonce]);
@@ -131,7 +170,7 @@ export default function Home() {
   return <main className="site-shell min-h-screen px-4 py-5 sm:px-8 sm:py-8">
     <header className="site-header mx-auto mb-6 flex max-w-[1440px] flex-wrap items-center justify-between gap-4">
       <div className="flex items-center gap-3"><div className="brand-mark flex h-11 w-11 items-center justify-center rounded-2xl bg-ink text-xl text-white">w.</div><div><p className="text-xs font-bold uppercase tracking-[.22em] text-moss">A little corner of the internet</p><h1 className="text-xl font-bold tracking-tight">The Small Web</h1></div></div>
-      <label className="reader-picker flex items-center gap-3 rounded-2xl border border-line bg-white px-4 py-2.5 shadow-sm"><span className="text-sm text-slate-500">Browsing as</span><select aria-label="Choose browsing user" className="max-w-40 bg-transparent font-semibold text-ink" value={userId} onChange={(event) => { const selected = event.target.value; const selectedSession = sessions[selected] ?? emptySession(); setUserId(selected); setAddress(selectedSession.entries[selectedSession.position]?.address ?? ''); setError(''); }}>{people.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}</select></label>
+      <label className="reader-picker flex items-center gap-3 rounded-2xl border border-line bg-white px-4 py-2.5 shadow-sm"><span className="text-sm text-slate-500">Browsing as</span><select aria-label="Choose browsing user" className="max-w-40 bg-transparent font-semibold text-ink" value={userId} onChange={(event) => { const selected = event.target.value; const selectedSession = sessionsRef.current[selected] ?? emptySession(); navigationGateRef.current!.cancel(); publishRequestRef.current += 1; activeUserRef.current = selected; setLoading(false); setPublishing(false); setUserId(selected); setAddress(selectedSession.entries[selectedSession.position]?.address ?? ''); setError(''); }}>{people.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}</select></label>
     </header>
 
     <section className="browser-window mx-auto max-w-[1440px] overflow-hidden rounded-[26px] border border-line bg-white shadow-soft">
